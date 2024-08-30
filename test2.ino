@@ -28,7 +28,7 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 Adafruit_SSD1306 oled(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-#define motor 23
+#define motor 18
 #define A1 32
 #define A2 33
 #define B1 36
@@ -39,6 +39,9 @@ Adafruit_SSD1306 oled(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define sub 25
 #define sab 26
 #define LED_TB 2
+#define soil_ss 35
+#define wate_ss 39
+
 
 ESP32Time rtc(0);
 
@@ -68,10 +71,11 @@ int menusel = 0;
 bool motorState2 = false;
 bool timeon = false;
 bool timeoff = false;
-int water = 0;
+int water = 0 ;
+int earth = 0;
 unsigned long checkt = 0;
-const char ssid[] = "A12.02";
-const char password[] = "A120201082024";
+const char ssid[] = "eoh.io";
+const char password[] = "Eoh@2020";
 bool checked = false;
 // Define NTP Server address
 const char* ntpServer = "vn.pool.ntp.org";  //Modify as per your country
@@ -119,13 +123,13 @@ String weatherTiengviet;
 int16_t dk1;
 int16_t dk2;
 int level;
-DHT dht(DHT_PIN, DHT_TYPE);
+DHT dht(DHT_PIN , DHT_TYPE);
 
 // Loc nhieu
 float x_kalman1;
 float x_kalman2; // kalman filled value
 float e;  // Error
-SimpleKalmanFilter bo_loc(1, 1, 0.01);
+SimpleKalmanFilter bo_loc(2, 2, 0.001);
 
 void setup() {
   SPIFFS.begin();
@@ -142,9 +146,11 @@ void setup() {
   pinMode(B1, OUTPUT);
   pinMode(B2, OUTPUT);
   pinMode(LED_TB, OUTPUT);
+  pinMode(soil_ss , INPUT);
+  pinMode(wate_ss, INPUT);
   Serial.println("Connected to WiFi");
-  ERa.begin(ssid, password);
-  // Start NTP time sync
+  ERa.begin(ssid, password); 
+// Start NTP time sync  
   timeClient.begin();
   timeClient.update();
   /*---------set internal RTC with NTP---------------*/
@@ -206,6 +212,7 @@ void timerEvent() {
   t = dht.readTemperature();
   ERa.virtualWrite(V0, h);
   ERa.virtualWrite(V1, t);
+  ERa.virtualWrite(V6, earth);
   ERa.virtualWrite(V5, water);
   ERA_LOG("Timer", "Uptime: %d", ERaMillis() / 1000L);
 }
@@ -237,16 +244,11 @@ ERA_WRITE(V2) { // hen gio thong qua ERa
   int y = me["y"].getInt();
   int z = me["z"].getInt();
   int m = me["m"].getInt();
-  int msg = me["msg"].getInt();
-  if (msg == 1) {
+  int msge = me["msg"].getInt();
+  if (msge == 1) {
     digitalWrite(LED_TB, HIGH);
-    motorState = true;
-    motortimer = millis();
-    motorTriggeredByButton = true;
-    digitalWrite(motor, HIGH);
-  } else if (msg == 2) {
+  } else if (msge == 2) {
     digitalWrite(LED_TB, LOW);
-    digitalWrite(motor, LOW);
   }
   relayOnHour = x;
   relayOffHour = y;
@@ -255,14 +257,12 @@ ERA_WRITE(V2) { // hen gio thong qua ERa
 }
 
 void sensor() {
-  dk1 = analogRead(35);
-  dk2 = analogRead(18);
-  randomSeed(millis());
-  e = (float)random(-20, 20);  // sai so dao dong 20
-  dk1 = dk1 + e;
-  dk2 = dk2 + e;
+  dk1 = analogRead(wate_ss);
+  dk2 = analogRead(soil_ss);
   x_kalman1 = bo_loc.updateEstimate(dk1); 
-  x_kalman2 = bo_loc.updateEstimate(dk2); // do am dat sau loc
+  x_kalman1 = bo_loc.updateEstimate(x_kalman1);
+  x_kalman2 = bo_loc.updateEstimate(dk2); // gia tri sau loc
+  x_kalman2 = bo_loc.updateEstimate(x_kalman2);
   h = dht.readHumidity();
   t = dht.readTemperature();
   // -------------------- Hen gio bat tat chan relay-------------------------//
@@ -289,24 +289,24 @@ void sensor() {
       Serial.println("Relay OFF");
     }
   }
-  if (x_kalman2 > 7) {
+  if (x_kalman2 < 300) {
     Serial.println("Water Level: Empty");
     water = 0;
-  } else if (x_kalman2 > 4 && x_kalman2 <= 7) {
+  } else if (x_kalman2 > 300 && x_kalman2 < 1000 ) {
     Serial.println("Water Level: Low");
     water = 1;
-  } else if (x_kalman2 > 1 && x_kalman2 <= 4) {
+  } else if (x_kalman2 > 1000 && x_kalman2 < 2500) {
     Serial.println("Water Level: Medium");
     water = 2;
-  } else if (x_kalman2 < 1) {
+  } else if (x_kalman2 > 2500 && x_kalman2 < 4096 ) {
     Serial.println("Water Level: High");
     water = 3;
   } else {
     Serial.println("Water Level: error");
   }
-  msg = x_kalman1 < 3000 ? "AM" : x_kalman1 > 3800 ? "KHO"
+  msg = x_kalman1 < 2000 ? "AM" : x_kalman1 > 3800 ? "KHO"
                                 : "Vua";
-  msg2 = x_kalman2 > 4 ? "Thap": x_kalman2 < 1 ? "Cao"
+  msg2 = x_kalman2 < 300 ? "Thap": x_kalman2 > 3500 ? "Cao"
                                 : "Vua";
   //  msg3 = t < temperature ? "Thap hon" : " Cao hon" ;
   if (motorTriggeredByButton && (millis() - motortimer >= 5000)) {
@@ -315,7 +315,7 @@ void sensor() {
     Serial.println("May bom ngung hoat dong");
     digitalWrite(motor, LOW);
   }
-  if (x_kalman2 < 4 && x_kalman1 > 3800) {
+  if (x_kalman2 > 1000  && x_kalman1 > 3000) {
     Serial.println("motor dang hoat dong");
     motorTriggeredByButton = true;
     digitalWrite(motor, HIGH);
@@ -457,12 +457,12 @@ void lcdmenu(int sel) {
       oled.setCursor(0, 0);
       oled.print("TG bat: >");
       oled.print(relayOnHour);
-      oled.print(" ");
+      oled.print("h  ");
       oled.print(relayOnMinute);
       oled.setCursor(0, 8);
       oled.print("TG tat: ");
       oled.print(relayOffHour);
-      oled.print(" ");
+      oled.print("h  ");
       oled.print(relayOffMinute);
       oled.setCursor(0, 16);
       oled.print("Muc nuoc:");
@@ -477,12 +477,12 @@ void lcdmenu(int sel) {
       oled.setCursor(0, 0);
       oled.print("TG bat: ");
       oled.print(relayOnHour);
-      oled.print(" >");
+      oled.print("h  >");
       oled.print(relayOnMinute);
       oled.setCursor(0, 8);
       oled.print("TG tat: ");
       oled.print(relayOffHour);
-      oled.print(" ");
+      oled.print("h   ");
       oled.print(relayOffMinute);
       oled.setCursor(0, 16);
       oled.print("Muc nuoc:");
@@ -497,12 +497,12 @@ void lcdmenu(int sel) {
       oled.setCursor(0, 0);
       oled.print("TG bat: ");
       oled.print(relayOnHour);
-      oled.print("   ");
+      oled.print("h   ");
       oled.print(relayOnMinute);
       oled.setCursor(0, 8);
       oled.print("TG tat: >");
       oled.print(relayOffHour);
-      oled.print("   ");
+      oled.print("h   ");
       oled.print(relayOffMinute);
       oled.setCursor(0, 18);
       oled.print("Muc nuoc:");
@@ -517,12 +517,12 @@ void lcdmenu(int sel) {
       oled.setCursor(0, 0);
       oled.print("TG bat: ");
       oled.print(relayOnHour);
-      oled.print("   ");
+      oled.print("h   ");
       oled.print(relayOnMinute);
       oled.setCursor(0, 8);
       oled.print("TG tat: ");
       oled.print(relayOffHour);
-      oled.print(" >");
+      oled.print("h  >");
       oled.print(relayOffMinute);
       oled.setCursor(0, 16);
       oled.print("Muc nuoc:");
